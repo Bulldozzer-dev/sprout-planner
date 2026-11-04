@@ -1,17 +1,134 @@
-'use strict';const assert=require('node:assert/strict'),P=require('./core'),S=require('./persistence');let passed=0;
-function test(n,f){f();passed++;console.log('PASS '+n);}
-const example=()=>({version:2,name:'Exam week',week:'2026-11-02',available:'Mon 09:00 12:00\nTue 09:00 12:00',classes:'Mon 10:00 11:00',tasks:'NLP | 60 | 1 | Mon\nSQL | 90 | 2',completed:[]});
-function store(){let data=null;return {getItem:()=>data,setItem:(k,v)=>data=v};}
-test('Deadline prevents scheduling into a later day',()=>{const r=P.schedule(P.windows('Tue 09:00 12:00'),[],P.tasks('NLP | 60 | 1 | Mon'));assert.equal(r.planned.length,0);assert.equal(r.unscheduled.length,1);});
-test('Earliest deadline wins within the same priority',()=>{const r=P.schedule(P.windows('Mon 09:00 10:00'),[],P.tasks('Later | 60 | 1 | Tue\nEarlier | 60 | 1 | Mon'));assert.equal(r.planned[0].name,'Earlier');});
-test('Public scheduling API rejects invalid structured windows',()=>{assert.throws(()=>P.schedule([{day:'No',start:0,end:100}],[],P.tasks('A | 5 | 1')));assert.throws(()=>P.schedule(P.windows('Mon 09:00 10:00'),[],[{name:'A',duration:-1,priority:1,order:0}]));});
-test('Deadline parser rejects unknown days',()=>assert.throws(()=>P.tasks('A | 30 | 1 | Monday')));
-test('Monday validation rejects wrong weekday and impossible date',()=>{assert.throws(()=>P.monday('2026-11-03'));assert.throws(()=>P.monday('2026-02-30'));assert.equal(P.monday('2026-11-02').getUTCDay(),1);});
-test('Named plan save updates one record without losing completion',()=>{const s=store(),p=example();S.save(s,p);p.completed=[0];S.save(s,p);const list=S.read(s);assert.equal(list.length,1);assert.deepEqual(list[0].completed,[0]);});
-test('Backup round trip validates content and isolates arrays',()=>{const p=example(),r=S.restore(JSON.stringify(p));assert.deepEqual(r,p);r.completed.push(0);assert.deepEqual(p.completed,[]);});
-test('Malformed version and corrupt completion backups are rejected',()=>{assert.throws(()=>S.restore('{'));assert.throws(()=>S.validate({...example(),version:1}));assert.throws(()=>S.validate({...example(),completed:[99]}));assert.throws(()=>S.validate({...example(),completed:[0,0]}));});
-test('Storage quota and corrupt storage failures propagate',()=>{assert.throws(()=>S.save({getItem:()=>null,setItem:()=>{throw Error('Quota exceeded');}},example()),/Quota/);assert.throws(()=>S.read({getItem:()=>'{'}),/unreadable/);});
-test('Calendar date offsets and local times match scheduled sessions',()=>{const p=example(),r=P.schedule(P.windows(p.available),P.windows(p.classes),P.tasks(p.tasks)),ics=P.calendar(r,p.week,p.name);assert.match(ics,/DTSTART:20261102T090000/);assert.match(ics,/DTEND:20261102T100000/);assert.match(ics,/DTSTART:20261103T090000/);assert.equal((ics.match(/BEGIN:VEVENT/g)||[]).length,2);assert(!ics.includes('TZID'));});
-test('Calendar escapes text and folds Unicode at 75 octets',()=>{const task={name:'学'.repeat(50)+',;\\\nEND:VEVENT',order:1,day:'Mon',start:540,end:600,priority:1};const ics=P.calendar({planned:[task]},'2026-11-02');for(const line of ics.split('\r\n'))assert(Buffer.byteLength(line)<=75);assert.equal((ics.match(/^END:VEVENT$/gm)||[]).length,1);assert.match(ics.replace(/\r\n /g,''),/\\,\\;/);});
-test('Generated deadline schedules preserve constraints',()=>{for(let i=1;i<=80;i++){const work=P.tasks(`A | ${i} | 1 | Mon\nB | 90 | 2 | Tue`),r=P.schedule(P.windows('Mon 09:00 12:00\nTue 09:00 13:00'),P.windows('Mon 10:00 11:00'),work);for(const t of r.planned){assert(P.days.indexOf(t.day)<=P.days.indexOf(t.deadline));assert(!(t.day==='Mon'&&t.start<660&&t.end>600));}assert.equal(r.planned.length+r.unscheduled.length,work.length);}});
-console.log(passed+' v2 tests passed');
+"use strict";
+const assert = require("node:assert/strict"),
+  P = require("./core"),
+  S = require("./persistence");
+let passed = 0;
+function test(n, f) {
+  f();
+  passed++;
+  console.log("PASS " + n);
+}
+const example = () => ({
+  version: 2,
+  name: "Exam week",
+  week: "2026-11-02",
+  available: "Mon 09:00 12:00\nTue 09:00 12:00",
+  classes: "Mon 10:00 11:00",
+  tasks: "NLP | 60 | 1 | Mon\nSQL | 90 | 2",
+  completed: [],
+});
+function store() {
+  let data = null;
+  return { getItem: () => data, setItem: (k, v) => (data = v) };
+}
+test("Deadline prevents scheduling into a later day", () => {
+  const r = P.schedule(P.windows("Tue 09:00 12:00"), [], P.tasks("NLP | 60 | 1 | Mon"));
+  assert.equal(r.planned.length, 0);
+  assert.equal(r.unscheduled.length, 1);
+});
+test("Earliest deadline wins within the same priority", () => {
+  const r = P.schedule(
+    P.windows("Mon 09:00 10:00"),
+    [],
+    P.tasks("Later | 60 | 1 | Tue\nEarlier | 60 | 1 | Mon"),
+  );
+  assert.equal(r.planned[0].name, "Earlier");
+});
+test("Public scheduling API rejects invalid structured windows", () => {
+  assert.throws(() =>
+    P.schedule([{ day: "No", start: 0, end: 100 }], [], P.tasks("A | 5 | 1")),
+  );
+  assert.throws(() =>
+    P.schedule(
+      P.windows("Mon 09:00 10:00"),
+      [],
+      [{ name: "A", duration: -1, priority: 1, order: 0 }],
+    ),
+  );
+});
+test("Deadline parser rejects unknown days", () =>
+  assert.throws(() => P.tasks("A | 30 | 1 | Monday")));
+test("Monday validation rejects wrong weekday and impossible date", () => {
+  assert.throws(() => P.monday("2026-11-03"));
+  assert.throws(() => P.monday("2026-02-30"));
+  assert.equal(P.monday("2026-11-02").getUTCDay(), 1);
+});
+test("Named plan save updates one record without losing completion", () => {
+  const s = store(),
+    p = example();
+  S.save(s, p);
+  p.completed = [0];
+  S.save(s, p);
+  const list = S.read(s);
+  assert.equal(list.length, 1);
+  assert.deepEqual(list[0].completed, [0]);
+});
+test("Backup round trip validates content and isolates arrays", () => {
+  const p = example(),
+    r = S.restore(JSON.stringify(p));
+  assert.deepEqual(r, p);
+  r.completed.push(0);
+  assert.deepEqual(p.completed, []);
+});
+test("Malformed version and corrupt completion backups are rejected", () => {
+  assert.throws(() => S.restore("{"));
+  assert.throws(() => S.validate({ ...example(), version: 1 }));
+  assert.throws(() => S.validate({ ...example(), completed: [99] }));
+  assert.throws(() => S.validate({ ...example(), completed: [0, 0] }));
+});
+test("Storage quota and corrupt storage failures propagate", () => {
+  assert.throws(
+    () =>
+      S.save(
+        {
+          getItem: () => null,
+          setItem: () => {
+            throw Error("Quota exceeded");
+          },
+        },
+        example(),
+      ),
+    /Quota/,
+  );
+  assert.throws(() => S.read({ getItem: () => "{" }), /unreadable/);
+});
+test("Calendar date offsets and local times match scheduled sessions", () => {
+  const p = example(),
+    r = P.schedule(P.windows(p.available), P.windows(p.classes), P.tasks(p.tasks)),
+    ics = P.calendar(r, p.week, p.name);
+  assert.match(ics, /DTSTART:20261102T090000/);
+  assert.match(ics, /DTEND:20261102T100000/);
+  assert.match(ics, /DTSTART:20261103T090000/);
+  assert.equal((ics.match(/BEGIN:VEVENT/g) || []).length, 2);
+  assert(!ics.includes("TZID"));
+});
+test("Calendar escapes text and folds Unicode at 75 octets", () => {
+  const task = {
+    name: "学".repeat(50) + ",;\\\nEND:VEVENT",
+    order: 1,
+    day: "Mon",
+    start: 540,
+    end: 600,
+    priority: 1,
+  };
+  const ics = P.calendar({ planned: [task] }, "2026-11-02");
+  for (const line of ics.split("\r\n")) assert(Buffer.byteLength(line) <= 75);
+  assert.equal((ics.match(/^END:VEVENT$/gm) || []).length, 1);
+  assert.match(ics.replace(/\r\n /g, ""), /\\,\\;/);
+});
+test("Generated deadline schedules preserve constraints", () => {
+  for (let i = 1; i <= 80; i++) {
+    const work = P.tasks(`A | ${i} | 1 | Mon\nB | 90 | 2 | Tue`),
+      r = P.schedule(
+        P.windows("Mon 09:00 12:00\nTue 09:00 13:00"),
+        P.windows("Mon 10:00 11:00"),
+        work,
+      );
+    for (const t of r.planned) {
+      assert(P.days.indexOf(t.day) <= P.days.indexOf(t.deadline));
+      assert(!(t.day === "Mon" && t.start < 660 && t.end > 600));
+    }
+    assert.equal(r.planned.length + r.unscheduled.length, work.length);
+  }
+});
+console.log(passed + " v2 tests passed");
