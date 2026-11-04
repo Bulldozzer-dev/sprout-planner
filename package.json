@@ -1,0 +1,9 @@
+{
+  "name": "sprout-planner",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sprout Week Planner \u2014 Simon Wagathiru portfolio prototype",
+  "scripts": {
+    "test": "node test.js"
+  }
+}
